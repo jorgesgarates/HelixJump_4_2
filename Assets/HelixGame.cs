@@ -9,6 +9,59 @@ public class HelixGame : MonoBehaviour
     const float Spacing = 3f, Radius = 0.34f, Orbit = 2f;
     const string RecordKey = "HelixJump_HighScore";
 
+    // Actividad 4.3: parametros editables desde el Inspector (antes de Play).
+    [Header("1. Generacion procedural continua")]
+    [SerializeField, Range(3, 20)] int plataformasAdelante = 8;
+    [SerializeField, Range(0, 5)] int plataformasAtras = 2;
+    [SerializeField, Min(1)] int plataformasPorNivel = 5;
+
+    [Header("2. Curva de dificultad")]
+    [SerializeField, Range(1, Sectors - 2)] int huecoInicial = 4;
+    [SerializeField, Range(1, Sectors - 2)] int huecoMinimo = 1;
+    [SerializeField, Range(0, 3)] int reduccionHuecoPorNivel = 1;
+    [SerializeField, Min(0)] int plataformasSinPeligro = 3;
+    [SerializeField, Range(0, Sectors - 2)] int peligrosIniciales = 1;
+    [SerializeField, Range(0, Sectors - 2)] int peligrosMaximos = 4;
+    [SerializeField, Range(0, 3)] int aumentoPeligroPorNivel = 1;
+    [SerializeField, Min(1f)] float gravedadInicial = 14f;
+    [SerializeField, Min(0f)] float aumentoGravedadPorNivel = 2f;
+    [SerializeField, Min(1f)] float gravedadMaxima = 28f;
+    [SerializeField, Min(1f)] float velocidadCaidaInicial = 12f;
+    [SerializeField, Min(0f)] float aumentoVelocidadPorNivel = 2f;
+    [SerializeField, Min(1f)] float velocidadCaidaMaxima = 24f;
+
+    [Header("3. Game Loop y controles")]
+    [SerializeField, Range(1f, 10f)] float segundosParaReiniciar = 3f;
+    [SerializeField, Min(1)] int puntosPorPlataforma = 10;
+    [SerializeField, Min(1f)] float velocidadGiro = 155f;
+    [SerializeField, Min(0.01f)] float sensibilidadArrastre = 0.25f;
+    [SerializeField, Min(0.5f)] float velocidadRebote = 6.3f;
+
+    void OnValidate()
+    {
+        plataformasAdelante = Mathf.Clamp(plataformasAdelante, 3, 20);
+        plataformasAtras = Mathf.Clamp(plataformasAtras, 0, 5);
+        plataformasPorNivel = Mathf.Max(1, plataformasPorNivel);
+        huecoInicial = Mathf.Clamp(huecoInicial, 1, Sectors - 2);
+        huecoMinimo = Mathf.Clamp(huecoMinimo, 1, huecoInicial);
+        reduccionHuecoPorNivel = Mathf.Clamp(reduccionHuecoPorNivel, 0, 3);
+        plataformasSinPeligro = Mathf.Max(0, plataformasSinPeligro);
+        peligrosIniciales = Mathf.Clamp(peligrosIniciales, 0, Sectors - 2);
+        peligrosMaximos = Mathf.Clamp(peligrosMaximos, peligrosIniciales, Sectors - 2);
+        aumentoPeligroPorNivel = Mathf.Clamp(aumentoPeligroPorNivel, 0, 3);
+        gravedadInicial = Mathf.Max(1f, gravedadInicial);
+        gravedadMaxima = Mathf.Max(gravedadInicial, gravedadMaxima);
+        aumentoGravedadPorNivel = Mathf.Max(0f, aumentoGravedadPorNivel);
+        velocidadCaidaInicial = Mathf.Max(1f, velocidadCaidaInicial);
+        velocidadCaidaMaxima = Mathf.Max(velocidadCaidaInicial, velocidadCaidaMaxima);
+        aumentoVelocidadPorNivel = Mathf.Max(0f, aumentoVelocidadPorNivel);
+        segundosParaReiniciar = Mathf.Clamp(segundosParaReiniciar, 1f, 10f);
+        puntosPorPlataforma = Mathf.Max(1, puntosPorPlataforma);
+        velocidadGiro = Mathf.Max(1f, velocidadGiro);
+        sensibilidadArrastre = Mathf.Max(0.01f, sensibilidadArrastre);
+        velocidadRebote = Mathf.Max(0.5f, velocidadRebote);
+    }
+
     class Ring
     {
         public GameObject root;
@@ -23,10 +76,13 @@ public class HelixGame : MonoBehaviour
     int nextRing, lastRing, score, best;
     float angle, height, speed, cameraHeight;
     bool gameOver;
-    int Difficulty => 1 + score / 50;
+    float tiempoReinicio;
+    int Difficulty => NivelDePlataforma(nextRing);
+    int NivelDePlataforma(int index) => 1 + index / Mathf.Max(1, plataformasPorNivel);
 
     void Start()
     {
+        OnValidate();
         best = PlayerPrefs.GetInt(RecordKey, 0);
         safeMat = MakeMaterial(new Color(0.05f, 0.73f, 0.84f));
         dangerMat = MakeMaterial(new Color(1f, 0.18f, 0.30f));
@@ -78,7 +134,7 @@ public class HelixGame : MonoBehaviour
         world.transform.SetParent(transform, false);
         nextRing = 0; lastRing = -1; score = 0;
         angle = 0f; height = 2.2f; speed = 0f;
-        cameraHeight = height; gameOver = false;
+        cameraHeight = height; gameOver = false; tiempoReinicio = 0f;
         GameObject player = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         player.name = "Jugador";
         player.transform.SetParent(world.transform, false);
@@ -95,10 +151,12 @@ public class HelixGame : MonoBehaviour
 
     void EnsureRings()
     {
-        while (lastRing < nextRing + 8) CreateRing(++lastRing);
+        // Ventana movil: genera por delante y elimina modulos ya superados.
+        // No existe un ultimo nivel predefinido.
+        while (lastRing < nextRing + plataformasAdelante) CreateRing(++lastRing);
         List<int> old = new List<int>();
         foreach (var pair in rings)
-            if (pair.Key < nextRing - 2) old.Add(pair.Key);
+            if (pair.Key < nextRing - plataformasAtras) old.Add(pair.Key);
         foreach (int i in old)
         {
             DeleteRing(rings[i]);
@@ -109,18 +167,22 @@ public class HelixGame : MonoBehaviour
     void CreateRing(int index)
     {
         Ring ring = new Ring();
-        ring.root = new GameObject("Plataforma " + (index + 1));
+        int nivel = NivelDePlataforma(index);
+        ring.root = new GameObject("Nivel " + nivel + " - Plataforma " + (index + 1));
         ring.root.transform.SetParent(world.transform, false);
         ring.root.transform.localPosition = new Vector3(0, -index * Spacing, 0);
-        // Cada cinco plataformas disminuye el hueco y aumenta el peligro.
-        int tier = index / 5;
-        int gapSize = Mathf.Max(1, 4 - tier);
+        // Cada nivel reduce la abertura hasta el minimo configurado.
+        int tier = nivel - 1;
+        int gapSize = Mathf.Max(huecoMinimo, huecoInicial - tier * reduccionHuecoPorNivel);
         int gapStart = index == 0 ? 3 : Random.Range(0, Sectors);
         for (int i = 0; i < Sectors; i++) ring.sectors[i] = 1;
         for (int j = 0; j < gapSize; j++) ring.sectors[(gapStart + j) % Sectors] = 0;
         List<int> safe = new List<int>();
         for (int i = 0; i < Sectors; i++) if (ring.sectors[i] == 1) safe.Add(i);
-        int hazards = index < 3 ? 0 : Mathf.Min(4, 1 + tier);
+        // El peligro aumenta por nivel sin eliminar todos los sectores seguros.
+        int hazards = index < plataformasSinPeligro ? 0 :
+            Mathf.Min(peligrosMaximos, peligrosIniciales + tier * aumentoPeligroPorNivel);
+        hazards = Mathf.Clamp(hazards, 0, safe.Count - 1);
         for (int j = 0; j < hazards && safe.Count > 1; j++)
         {
             int k = Random.Range(0, safe.Count);
@@ -192,9 +254,14 @@ public class HelixGame : MonoBehaviour
         Touchscreen touch = Touchscreen.current;
         if (gameOver)
         {
-            if ((kb != null && (kb.rKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame)) ||
+            // Game Loop: perder -> mostrar resultado -> reiniciar automaticamente.
+            tiempoReinicio -= Time.unscaledDeltaTime;
+            bool reinicioManual =
+                (kb != null && (kb.rKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame)) ||
                 (mouse != null && mouse.leftButton.wasPressedThisFrame) ||
-                (touch != null && touch.primaryTouch.press.wasPressedThisFrame)) ResetGame();
+                (touch != null && touch.primaryTouch.press.wasPressedThisFrame);
+            if (tiempoReinicio <= 0f || reinicioManual) ResetGame();
+            else MostrarCuentaReinicio();
             return;
         }
         float dt = Mathf.Min(Time.deltaTime, 0.05f), direction = 0f;
@@ -204,15 +271,19 @@ public class HelixGame : MonoBehaviour
             if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) direction += 1f;
             if (kb.rKey.wasPressedThisFrame) { ResetGame(); return; }
         }
-        angle += direction * 155f * dt;
+        angle += direction * velocidadGiro * dt;
         if (touch != null && touch.primaryTouch.press.isPressed)
-            angle += touch.primaryTouch.delta.ReadValue().x * 0.25f;
+            angle += touch.primaryTouch.delta.ReadValue().x * sensibilidadArrastre;
         else if (mouse != null && mouse.leftButton.isPressed)
-            angle += mouse.delta.ReadValue().x * 0.25f;
+            angle += mouse.delta.ReadValue().x * sensibilidadArrastre;
         angle = Mathf.Repeat(angle, 360f);
         // Descenso continuo y rebote con deteccion de sectores por coordenadas.
-        speed -= (14f + Mathf.Min(14f, (Difficulty - 1) * 2f)) * dt;
-        speed = Mathf.Max(speed, -(12f + Mathf.Min(12f, (Difficulty - 1) * 2f)));
+        float gravedad = Mathf.Min(gravedadMaxima,
+            gravedadInicial + (Difficulty - 1) * aumentoGravedadPorNivel);
+        float limiteCaida = Mathf.Min(velocidadCaidaMaxima,
+            velocidadCaidaInicial + (Difficulty - 1) * aumentoVelocidadPorNivel);
+        speed -= gravedad * dt;
+        speed = Mathf.Max(speed, -limiteCaida);
         float newHeight = height + speed * dt;
         while (speed < 0f)
         {
@@ -222,14 +293,15 @@ public class HelixGame : MonoBehaviour
             int type = rings[nextRing].sectors[s];
             if (type == 1)
             {
-                newHeight = surface; speed = 6.3f; break;
+                newHeight = surface; speed = velocidadRebote; break;
             }
             if (type == 2)
             {
                 height = surface; SetBallPosition(); EndGame(); return;
             }
-            // Incremento uniforme: diez puntos por plataforma atravesada.
-            nextRing++; score += 10;
+            // Una plataforma atravesada: sumar puntos y generar otra seccion.
+            nextRing++;
+            score += puntosPorPlataforma;
             if (score > best)
             {
                 best = score;
@@ -257,8 +329,17 @@ public class HelixGame : MonoBehaviour
         gameOver = true;
         PlayerPrefs.SetInt(RecordKey, best);
         PlayerPrefs.Save();
-        messageText.text = "FIN DEL JUEGO\nPuntos: " + score + "\nR / Espacio / Clic para reiniciar";
+        tiempoReinicio = segundosParaReiniciar;
+        MostrarCuentaReinicio();
         UpdateUI();
+    }
+
+    void MostrarCuentaReinicio()
+    {
+        messageText.text = "FIN DEL JUEGO\nPuntos: " + score +
+            " | Nivel: " + Difficulty +
+            "\nReinicio automatico en " + Mathf.Max(0, Mathf.CeilToInt(tiempoReinicio)) + " s" +
+            "\nR / Espacio / Clic para reiniciar ya";
     }
 
     void CreateUI()
@@ -273,14 +354,14 @@ public class HelixGame : MonoBehaviour
         scaler.referenceResolution = new Vector2(1280, 720);
         scaler.matchWidthOrHeight = 0.5f;
         scoreText = MakeText(obj.transform, "Puntuacion", new Vector2(0, 1), new Vector2(0, 1),
-            new Vector2(25, -20), new Vector2(450, 105), 35, TextAnchor.UpperLeft);
+            new Vector2(25, -20), new Vector2(560, 150), 32, TextAnchor.UpperLeft);
         bestText = MakeText(obj.transform, "Record", new Vector2(1, 1), new Vector2(1, 1),
             new Vector2(-25, -20), new Vector2(450, 90), 30, TextAnchor.UpperRight);
         Text help = MakeText(obj.transform, "Controles", new Vector2(0.5f, 0), new Vector2(0.5f, 0),
             new Vector2(0, 22), new Vector2(1150, 60), 24, TextAnchor.MiddleCenter);
         help.text = "A / D o flechas | Arrastra con raton o dedo | R: reiniciar";
         messageText = MakeText(obj.transform, "Mensaje", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-            Vector2.zero, new Vector2(1000, 250), 44, TextAnchor.MiddleCenter);
+            Vector2.zero, new Vector2(1150, 320), 40, TextAnchor.MiddleCenter);
         messageText.color = new Color(1f, 0.85f, 0.3f);
     }
 
@@ -304,7 +385,8 @@ public class HelixGame : MonoBehaviour
 
     void UpdateUI()
     {
-        scoreText.text = "PUNTOS: " + score + "\nDificultad: " + Difficulty;
+        scoreText.text = "PUNTOS: " + score + "\nNIVEL: " + Difficulty +
+            "\nPlataformas: " + nextRing;
         bestText.text = "RECORD: " + best;
     }
 }
