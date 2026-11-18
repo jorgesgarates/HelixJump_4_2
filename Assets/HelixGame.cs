@@ -1,6 +1,9 @@
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.UI;
+using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 
 public class HelixGame : MonoBehaviour
@@ -75,6 +78,19 @@ public class HelixGame : MonoBehaviour
     [SerializeField, Range(0f, 1f)] float intensidadSombras = 0.55f;
     [SerializeField] Color colorLuzRelleno = new Color(0.60f, 0.77f, 1f);
     [SerializeField, Range(0f, 2f)] float intensidadRelleno = 0.55f;
+    [Header("7. Interfaz y navegacion - Actividad 4.5")]
+    [SerializeField] Color colorPanel = new Color(0.035f, 0.065f, 0.13f, 0.98f);
+    [SerializeField] Color colorBoton = new Color(0.06f, 0.48f, 0.65f);
+    [SerializeField] bool reinicioAutomatico = true;
+    const string EscenaMenu = "Menu";
+    const string EscenaNivel1 = "Nivel1";
+    const string EscenaNivel2 = "Nivel2";
+    static int etapaGuardada = 1, puntosGuardados = 0;
+    int etapaActual = 1, puntosInicioNivel;
+    bool enMenu, enPausa, nivelCompletado, cargando;
+    Transform uiRoot;
+    GameObject hud, panel;
+    Text panelDetalle;
     int temaManual, indiceJugador;
     Light luzPrincipal, luzRelleno;
 
@@ -119,12 +135,23 @@ public class HelixGame : MonoBehaviour
     float angle, height, speed, cameraHeight;
     bool gameOver;
     float tiempoReinicio;
-    int Difficulty => NivelDePlataforma(nextRing);
-    int NivelDePlataforma(int index) => 1 + index / Mathf.Max(1, plataformasPorNivel);
+    int Difficulty => etapaActual;
+    int NivelDePlataforma(int index) => etapaActual;
 
     void Start()
     {
         OnValidate();
+        string escena = SceneManager.GetActiveScene().name;
+        enMenu = escena == EscenaMenu;
+        if (escena != EscenaNivel2)
+        {
+            etapaGuardada = 1;
+            puntosGuardados = 0;
+        }
+        else if (escena == EscenaNivel2)
+            etapaGuardada = Mathf.Max(2, etapaGuardada);
+        etapaActual = etapaGuardada;
+        puntosInicioNivel = puntosGuardados;
         best = PlayerPrefs.GetInt(RecordKey, 0);
         safeMat = MakeMaterial(colorSeguro);
         dangerMat = MakeMaterial(colorPeligro);
@@ -145,6 +172,7 @@ public class HelixGame : MonoBehaviour
         ConfigurarIluminacion();
         CreateUI();
         ResetGame();
+        if (enMenu) MostrarMenu();
     }
 
     Material MakeMaterial(Color color)
@@ -259,9 +287,12 @@ public class HelixGame : MonoBehaviour
         rings.Clear();
         world = new GameObject("Torre Helix");
         world.transform.SetParent(transform, false);
-        nextRing = 0; lastRing = -1; score = 0;
+        nextRing = 0; lastRing = -1; score = puntosInicioNivel;
         angle = 0f; height = 2.2f; speed = 0f;
         cameraHeight = height; gameOver = false; tiempoReinicio = 0f;
+        enPausa = false; nivelCompletado = false;
+        CerrarPanel();
+        if (hud != null) hud.SetActive(!enMenu);
         GameObject player = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         player.name = "Jugador";
         player.transform.SetParent(world.transform, false);
@@ -389,18 +420,22 @@ public class HelixGame : MonoBehaviour
                 indiceJugador = (indiceJugador + 1) % coloresJugador.Length;
         }
         ActualizarVisuales(1f - Mathf.Exp(-velocidadTransicionColor * Time.unscaledDeltaTime));
+        if (cargando || enMenu || nivelCompletado) return;
         if (gameOver)
         {
-            // Game Loop: perder -> mostrar resultado -> reiniciar automaticamente.
-            tiempoReinicio -= Time.unscaledDeltaTime;
-            bool reinicioManual =
-                (kb != null && (kb.rKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame)) ||
-                (mouse != null && mouse.leftButton.wasPressedThisFrame) ||
-                (touch != null && touch.primaryTouch.press.wasPressedThisFrame);
-            if (tiempoReinicio <= 0f || reinicioManual) ResetGame();
+            if (reinicioAutomatico) tiempoReinicio -= Time.unscaledDeltaTime;
+            bool reinicioManual = kb != null &&
+                (kb.rKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame);
+            if ((reinicioAutomatico && tiempoReinicio <= 0f) || reinicioManual) ResetGame();
             else MostrarCuentaReinicio();
             return;
         }
+        if (kb != null && kb.escapeKey.wasPressedThisFrame)
+        {
+            if (enPausa) Reanudar(); else Pausar();
+            return;
+        }
+        if (enPausa) return;
         float dt = Mathf.Min(Time.deltaTime, 0.05f), direction = 0f;
         if (kb != null)
         {
@@ -409,10 +444,13 @@ public class HelixGame : MonoBehaviour
             if (kb.rKey.wasPressedThisFrame) { ResetGame(); return; }
         }
         angle += direction * velocidadGiro * dt;
-        if (touch != null && touch.primaryTouch.press.isPressed)
-            angle += touch.primaryTouch.delta.ReadValue().x * sensibilidadArrastre;
-        else if (mouse != null && mouse.leftButton.isPressed)
-            angle += mouse.delta.ReadValue().x * sensibilidadArrastre;
+        if (EventSystem.current == null || !EventSystem.current.IsPointerOverGameObject())
+        {
+            if (touch != null && touch.primaryTouch.press.isPressed)
+                angle += touch.primaryTouch.delta.ReadValue().x * sensibilidadArrastre;
+            else if (mouse != null && mouse.leftButton.isPressed)
+                angle += mouse.delta.ReadValue().x * sensibilidadArrastre;
+        }
         angle = Mathf.Repeat(angle, 360f);
         // Descenso continuo y rebote con deteccion de sectores por coordenadas.
         float gravedad = Mathf.Min(gravedadMaxima,
@@ -445,6 +483,14 @@ public class HelixGame : MonoBehaviour
                 PlayerPrefs.SetInt(RecordKey, best);
                 PlayerPrefs.Save();
             }
+            if (nextRing >= plataformasPorNivel)
+            {
+                height = newHeight;
+                SetBallPosition();
+                UpdateCamera(1f);
+                CompletarNivel();
+                return;
+            }
             UpdateUI(); EnsureRings();
         }
         height = newHeight;
@@ -467,21 +513,106 @@ public class HelixGame : MonoBehaviour
         PlayerPrefs.SetInt(RecordKey, best);
         PlayerPrefs.Save();
         tiempoReinicio = segundosParaReiniciar;
+        AbrirPanel("FIN DEL JUEGO", "", new string[] { "Reintentar", "Menu principal" },
+            new System.Action[] { ResetGame, VolverMenu });
         MostrarCuentaReinicio();
         UpdateUI();
     }
 
     void MostrarCuentaReinicio()
     {
-        messageText.text = "FIN DEL JUEGO\nPuntos: " + score +
-            " | Nivel: " + Difficulty +
-            "\nReinicio automatico en " + Mathf.Max(0, Mathf.CeilToInt(tiempoReinicio)) + " s" +
-            "\nR / Espacio / Clic para reiniciar ya";
+        if (panelDetalle == null) return;
+        panelDetalle.text = "Puntos: " + score + "   |   Nivel: " + etapaActual +
+            (reinicioAutomatico ? "\nReinicio en " + Mathf.Max(0, Mathf.CeilToInt(tiempoReinicio)) + " s" :
+                "\nPulsa Reintentar para volver a jugar.");
+    }
+
+    // Actividad 4.5: navegacion entre escenas y estados de interfaz.
+    void CargarEscena(string escena, int etapa, int puntos)
+    {
+        if (cargando) return;
+        if (!Application.CanStreamedLevelBeLoaded(escena))
+        {
+            if (panelDetalle != null)
+                panelDetalle.text = "No se encontro la escena " + escena + ".\nRevisa la lista de escenas de compilacion.";
+            Debug.LogWarning("Escena no incluida en Build Profiles: " + escena);
+            return;
+        }
+        etapaGuardada = etapa;
+        puntosGuardados = puntos;
+        tiempoReinicio = 0f;
+        cargando = true;
+        Time.timeScale = 1f;
+        SceneManager.LoadScene(escena, LoadSceneMode.Single);
+    }
+
+    void Jugar() { CargarEscena(EscenaNivel1, 1, 0); }
+    void VolverMenu() { CargarEscena(EscenaMenu, 1, 0); }
+    void SiguienteNivel() { CargarEscena(EscenaNivel2, etapaActual + 1, score); }
+    void Salir()
+    {
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
+    }
+
+    void MostrarMenu()
+    {
+        enMenu = true;
+        hud.SetActive(false);
+        AbrirPanel("HELIX JUMP", "Desciende por la torre y supera cada nivel.\nRecord: " + best,
+            new string[] { "Jugar", "Instrucciones", "Salir" },
+            new System.Action[] { Jugar, MostrarInstrucciones, Salir });
+    }
+
+    void MostrarInstrucciones()
+    {
+        AbrirPanel("COMO JUGAR", "A / D o flechas: girar.\nArrastra con el raton o el dedo.\nEvita los sectores rojos y atraviesa los huecos.\nESC: pausa | V: fondo | C: color | R: reiniciar.",
+            new string[] { "Volver" }, new System.Action[] { MostrarMenu });
+    }
+
+    void Pausar()
+    {
+        if (enMenu || gameOver || nivelCompletado || cargando) return;
+        enPausa = true;
+        AbrirPanel("PAUSA", "Nivel " + etapaActual + "   |   Puntos: " + score,
+            new string[] { "Continuar", "Reiniciar nivel", "Menu principal" },
+            new System.Action[] { Reanudar, ResetGame, VolverMenu });
+    }
+
+    void Reanudar()
+    {
+        enPausa = false;
+        CerrarPanel();
+    }
+
+    void CompletarNivel()
+    {
+        nivelCompletado = true;
+        UpdateUI();
+        AbrirPanel("NIVEL " + etapaActual + " COMPLETADO", "Plataformas superadas: " + nextRing +
+            " / " + plataformasPorNivel + "\nPuntuacion acumulada: " + score,
+            new string[] { "Siguiente nivel", "Menu principal" },
+            new System.Action[] { SiguienteNivel, VolverMenu });
+    }
+
+    void CerrarPanel()
+    {
+        if (panel != null)
+        {
+            panel.SetActive(false);
+            Destroy(panel);
+        }
+        panel = null;
+        panelDetalle = null;
+        if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
     }
 
     void CreateUI()
     {
-        GameObject obj = new GameObject("Interfaz", typeof(RectTransform));
+        GameObject obj = new GameObject("Interfaz Canvas", typeof(RectTransform));
         obj.transform.SetParent(transform, false);
         Canvas canvas = obj.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -489,17 +620,125 @@ public class HelixGame : MonoBehaviour
         CanvasScaler scaler = obj.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1280, 720);
-        scaler.matchWidthOrHeight = 0.5f;
-        scoreText = MakeText(obj.transform, "Puntuacion", new Vector2(0, 1), new Vector2(0, 1),
-            new Vector2(25, -20), new Vector2(560, 150), 32, TextAnchor.UpperLeft);
-        bestText = MakeText(obj.transform, "Record", new Vector2(1, 1), new Vector2(1, 1),
-            new Vector2(-25, -20), new Vector2(450, 90), 30, TextAnchor.UpperRight);
-        Text help = MakeText(obj.transform, "Controles", new Vector2(0.5f, 0), new Vector2(0.5f, 0),
-            new Vector2(0, 22), new Vector2(1150, 60), 24, TextAnchor.MiddleCenter);
-        help.text = "A / D o flechas: girar | V: fondo | C: color del jugador | R: reiniciar";
-        messageText = MakeText(obj.transform, "Mensaje", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-            Vector2.zero, new Vector2(1150, 320), 40, TextAnchor.MiddleCenter);
-        messageText.color = new Color(1f, 0.85f, 0.3f);
+        scaler.matchWidthOrHeight = 1f;
+        obj.AddComponent<GraphicRaycaster>();
+        uiRoot = obj.transform;
+        EventSystem eventos = EventSystem.current;
+        if (eventos == null)
+        {
+            GameObject sistema = new GameObject("EventSystem");
+            sistema.transform.SetParent(transform, false);
+            eventos = sistema.AddComponent<EventSystem>();
+        }
+        if (eventos.GetComponent<InputSystemUIInputModule>() == null)
+        {
+            foreach (BaseInputModule anterior in eventos.GetComponents<BaseInputModule>())
+                anterior.enabled = false;
+            InputSystemUIInputModule modulo = eventos.gameObject.AddComponent<InputSystemUIInputModule>();
+            if (modulo.actionsAsset == null) modulo.AssignDefaultActions();
+        }
+        hud = new GameObject("HUD", typeof(RectTransform));
+        hud.transform.SetParent(uiRoot, false);
+        Estirar(hud.GetComponent<RectTransform>());
+        scoreText = MakeText(hud.transform, "Puntuacion", new Vector2(0, 1), new Vector2(0, 1),
+            new Vector2(22, -14), new Vector2(300, 112), 27, TextAnchor.UpperLeft);
+        bestText = MakeText(hud.transform, "Record", new Vector2(1, 1), new Vector2(1, 1),
+            new Vector2(-22, -14), new Vector2(300, 50), 26, TextAnchor.UpperRight);
+        MakeButton(hud.transform, "Pausa", new Vector2(1, 1), new Vector2(1, 1),
+            new Vector2(-22, -74), new Vector2(140, 48), Pausar);
+        MakeButton(hud.transform, "Fondo", new Vector2(0, 0), new Vector2(0, 0),
+            new Vector2(18, 18), new Vector2(130, 46), CambiarFondo);
+        MakeButton(hud.transform, "Esfera", new Vector2(1, 0), new Vector2(1, 0),
+            new Vector2(-18, 18), new Vector2(130, 46), CambiarEsfera);
+        Text help = MakeText(hud.transform, "Controles", new Vector2(0.5f, 0), new Vector2(0.5f, 0),
+            new Vector2(0, 18), new Vector2(350, 48), 21, TextAnchor.MiddleCenter);
+        help.text = "A / D o arrastrar para girar";
+        messageText = MakeText(hud.transform, "Mensaje", new Vector2(.5f, .5f), new Vector2(.5f, .5f),
+            Vector2.zero, new Vector2(400, 80), 25, TextAnchor.MiddleCenter);
+    }
+
+    void CambiarFondo()
+    {
+        if (coloresFondo != null && coloresFondo.Length > 0)
+            temaManual = (temaManual + 1) % coloresFondo.Length;
+    }
+    void CambiarEsfera()
+    {
+        if (coloresJugador != null && coloresJugador.Length > 0)
+            indiceJugador = (indiceJugador + 1) % coloresJugador.Length;
+    }
+
+    void Estirar(RectTransform rect)
+    {
+        rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one;
+        rect.offsetMin = rect.offsetMax = Vector2.zero;
+    }
+
+    void AbrirPanel(string titulo, string detalle, string[] nombres, System.Action[] acciones)
+    {
+        CerrarPanel();
+        panel = new GameObject("Panel " + titulo, typeof(RectTransform));
+        panel.transform.SetParent(uiRoot, false);
+        Estirar(panel.GetComponent<RectTransform>());
+        Image sombra = panel.AddComponent<Image>();
+        sombra.color = new Color(0.015f, 0.025f, 0.06f, 0.74f);
+        GameObject tarjeta = new GameObject("Tarjeta", typeof(RectTransform));
+        tarjeta.transform.SetParent(panel.transform, false);
+        RectTransform rt = tarjeta.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = new Vector2(.5f, .5f);
+        rt.sizeDelta = new Vector2(560, 540);
+        tarjeta.AddComponent<Image>().color = colorPanel;
+        // El panel se adapta tambien a pantallas verticales.
+        float anchoDisponible = 720f * Screen.width / Mathf.Max(1f, Screen.height);
+        float escala = Mathf.Min(1f, Mathf.Max(0.1f, (anchoDisponible - 24f) / 560f));
+        rt.localScale = Vector3.one * escala;
+        Text encabezado = MakeText(tarjeta.transform, "Titulo", new Vector2(.5f, 1), new Vector2(.5f, 1),
+            new Vector2(0, -25), new Vector2(520, 85), 38, TextAnchor.MiddleCenter);
+        encabezado.text = titulo;
+        encabezado.color = new Color(.55f, .95f, 1f);
+        panelDetalle = MakeText(tarjeta.transform, "Detalle", new Vector2(.5f, 1), new Vector2(.5f, 1),
+            new Vector2(0, -112), new Vector2(510, 168), 23, TextAnchor.MiddleCenter);
+        panelDetalle.text = detalle;
+        for (int i = 0; i < nombres.Length; i++)
+            MakeButton(tarjeta.transform, nombres[i], new Vector2(.5f, 1), new Vector2(.5f, 1),
+                new Vector2(0, -290 - i * 70), new Vector2(410, 58), acciones[i]);
+    }
+
+    Button MakeButton(Transform parent, string nombre, Vector2 anchor, Vector2 pivot,
+        Vector2 position, Vector2 size, System.Action accion)
+    {
+        GameObject obj = new GameObject(nombre, typeof(RectTransform));
+        obj.transform.SetParent(parent, false);
+        RectTransform rect = obj.GetComponent<RectTransform>();
+        rect.anchorMin = rect.anchorMax = anchor; rect.pivot = pivot;
+        rect.anchoredPosition = position; rect.sizeDelta = size;
+        Image fondo = obj.AddComponent<Image>();
+        fondo.color = colorBoton;
+        Button boton = obj.AddComponent<Button>();
+        boton.targetGraphic = fondo;
+        ColorBlock colores = boton.colors;
+        colores.normalColor = Color.white;
+        colores.highlightedColor = new Color(.83f, 1f, 1f);
+        colores.pressedColor = new Color(.65f, .78f, .85f);
+        boton.colors = colores;
+        Navigation nav = boton.navigation; nav.mode = Navigation.Mode.None; boton.navigation = nav;
+        Text texto = MakeText(obj.transform, "Texto", new Vector2(.5f, .5f), new Vector2(.5f, .5f),
+            Vector2.zero, size, 24, TextAnchor.MiddleCenter);
+        texto.text = nombre;
+        boton.onClick.AddListener(() => accion());
+        return boton;
+    }
+
+    void OnDestroy()
+    {
+        foreach (Ring ring in rings.Values)
+            if (ring.root != null)
+                foreach (MeshFilter f in ring.root.GetComponentsInChildren<MeshFilter>(true))
+                    if (f.sharedMesh != null && f.sharedMesh.name == "HelixSector") Destroy(f.sharedMesh);
+        if (safeMat != null) Destroy(safeMat);
+        if (dangerMat != null) Destroy(dangerMat);
+        if (ballMat != null) Destroy(ballMat);
+        if (pillarMat != null) Destroy(pillarMat);
     }
 
     Text MakeText(Transform parent, string name, Vector2 anchor, Vector2 pivot,
@@ -522,8 +761,8 @@ public class HelixGame : MonoBehaviour
 
     void UpdateUI()
     {
-        scoreText.text = "PUNTOS: " + score + "\nNIVEL: " + Difficulty +
-            "\nPlataformas: " + nextRing;
+        scoreText.text = "PUNTOS: " + score + "\nNIVEL: " + etapaActual +
+            "\nPlataformas: " + nextRing + " / " + plataformasPorNivel;
         bestText.text = "RECORD: " + best;
     }
 }
