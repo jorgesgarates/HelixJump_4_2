@@ -37,6 +37,47 @@ public class HelixGame : MonoBehaviour
     [SerializeField, Min(0.01f)] float sensibilidadArrastre = 0.25f;
     [SerializeField, Min(0.5f)] float velocidadRebote = 6.3f;
 
+    // Actividad 4.4: iluminacion, materiales y personalizacion en tiempo real.
+    [Header("4. Fondo dinamico del entorno")]
+    [SerializeField] bool cambiarFondoPorNivel = true;
+    [SerializeField] Color[] coloresFondo = new Color[]
+    {
+        new Color(0.045f, 0.075f, 0.17f), // Azul nocturno
+        new Color(0.27f, 0.07f, 0.34f),   // Violeta
+        new Color(0.035f, 0.25f, 0.24f),  // Turquesa oscuro
+        new Color(0.37f, 0.09f, 0.15f),   // Vino
+        new Color(0.10f, 0.18f, 0.42f)    // Azul intenso
+    };
+    [SerializeField, Min(0.1f)] float velocidadTransicionColor = 4f;
+
+    [Header("5. Personaje y materiales")]
+    [SerializeField] Color[] coloresJugador = new Color[]
+    {
+        new Color(1f, 0.76f, 0.10f),      // Dorado
+        new Color(0.95f, 0.22f, 0.82f),   // Magenta
+        new Color(0.25f, 1f, 0.35f),      // Verde lima
+        new Color(0.93f, 0.96f, 1f)       // Blanco
+    };
+    [SerializeField, Range(0f, 1f)] float metalicoJugador = 0.18f;
+    [SerializeField, Range(0f, 1f)] float suavidadJugador = 0.82f;
+    [SerializeField, Range(0f, 2f)] float emisionJugador = 0.40f;
+    [SerializeField] Color colorSeguro = new Color(0.03f, 0.72f, 0.88f);
+    [SerializeField] Color colorPeligro = new Color(1f, 0.16f, 0.25f);
+    [SerializeField] Color colorColumna = new Color(0.32f, 0.40f, 0.56f);
+    [SerializeField, Range(0f, 1f)] float suavidadPlataformas = 0.55f;
+    [SerializeField, Range(0f, 1f)] float metalicoPlataformas = 0.12f;
+
+    [Header("6. Iluminacion ambiental y direccional")]
+    [SerializeField] Color colorAmbiente = new Color(0.45f, 0.49f, 0.60f);
+    [SerializeField] Color colorLuz = new Color(1f, 0.94f, 0.84f);
+    [SerializeField, Range(0f, 3f)] float intensidadLuz = 1.35f;
+    [SerializeField] Vector3 rotacionLuz = new Vector3(48f, -35f, 0f);
+    [SerializeField, Range(0f, 1f)] float intensidadSombras = 0.55f;
+    [SerializeField] Color colorLuzRelleno = new Color(0.60f, 0.77f, 1f);
+    [SerializeField, Range(0f, 2f)] float intensidadRelleno = 0.55f;
+    int temaManual, indiceJugador;
+    Light luzPrincipal, luzRelleno;
+
     void OnValidate()
     {
         plataformasAdelante = Mathf.Clamp(plataformasAdelante, 3, 20);
@@ -60,6 +101,7 @@ public class HelixGame : MonoBehaviour
         velocidadGiro = Mathf.Max(1f, velocidadGiro);
         sensibilidadArrastre = Mathf.Max(0.01f, sensibilidadArrastre);
         velocidadRebote = Mathf.Max(0.5f, velocidadRebote);
+        velocidadTransicionColor = Mathf.Max(0.1f, velocidadTransicionColor);
     }
 
     class Ring
@@ -84,10 +126,10 @@ public class HelixGame : MonoBehaviour
     {
         OnValidate();
         best = PlayerPrefs.GetInt(RecordKey, 0);
-        safeMat = MakeMaterial(new Color(0.05f, 0.73f, 0.84f));
-        dangerMat = MakeMaterial(new Color(1f, 0.18f, 0.30f));
-        ballMat = MakeMaterial(new Color(1f, 0.77f, 0.12f));
-        pillarMat = MakeMaterial(new Color(0.26f, 0.32f, 0.46f));
+        safeMat = MakeMaterial(colorSeguro);
+        dangerMat = MakeMaterial(colorPeligro);
+        ballMat = MakeMaterial(ColorDePaleta(coloresJugador, 0, Color.yellow));
+        pillarMat = MakeMaterial(colorColumna);
         cam = Camera.main;
         if (cam == null)
         {
@@ -98,8 +140,9 @@ public class HelixGame : MonoBehaviour
         cam.orthographic = false;
         cam.fieldOfView = 52f;
         cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = new Color(0.055f, 0.08f, 0.15f);
+        cam.backgroundColor = ColorDePaleta(coloresFondo, 0, Color.black);
         cam.farClipPlane = 150f;
+        ConfigurarIluminacion();
         CreateUI();
         ResetGame();
     }
@@ -111,6 +154,90 @@ public class HelixGame : MonoBehaviour
         Material mat = new Material(shader);
         mat.color = color;
         return mat;
+    }
+
+    // Paletas configurables en Inspector; se admiten listas vacias.
+    Color ColorDePaleta(Color[] paleta, int indice, Color respaldo)
+    {
+        if (paleta == null || paleta.Length == 0) return respaldo;
+        return paleta[indice % paleta.Length];
+    }
+
+    void ConfigurarIluminacion()
+    {
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+        RenderSettings.ambientLight = colorAmbiente;
+        luzPrincipal = RenderSettings.sun;
+        if (luzPrincipal == null || luzPrincipal.type != LightType.Directional)
+        {
+            luzPrincipal = null;
+            foreach (Light l in FindObjectsByType<Light>(FindObjectsSortMode.None))
+                if (l.type == LightType.Directional && l.isActiveAndEnabled)
+                {
+                    luzPrincipal = l;
+                    break;
+                }
+        }
+        if (luzPrincipal == null)
+        {
+            GameObject principal = new GameObject("Luz principal");
+            principal.transform.SetParent(transform, false);
+            luzPrincipal = principal.AddComponent<Light>();
+        }
+        luzPrincipal.type = LightType.Directional;
+        luzPrincipal.shadows = LightShadows.Soft;
+        RenderSettings.sun = luzPrincipal;
+        GameObject relleno = new GameObject("Luz de relleno");
+        relleno.transform.SetParent(transform, false);
+        luzRelleno = relleno.AddComponent<Light>();
+        luzRelleno.type = LightType.Directional;
+        luzRelleno.transform.rotation = Quaternion.Euler(25f, 145f, 0f);
+        luzRelleno.shadows = LightShadows.None;
+        ActualizarLuces();
+    }
+
+    void ActualizarLuces()
+    {
+        RenderSettings.ambientLight = colorAmbiente;
+        if (luzPrincipal != null)
+        {
+            luzPrincipal.color = colorLuz;
+            luzPrincipal.intensity = intensidadLuz;
+            luzPrincipal.transform.rotation = Quaternion.Euler(rotacionLuz);
+            luzPrincipal.shadowStrength = intensidadSombras;
+        }
+        if (luzRelleno != null)
+        {
+            luzRelleno.color = colorLuzRelleno;
+            luzRelleno.intensity = intensidadRelleno;
+        }
+    }
+
+    void AplicarMaterial(Material mat, Color color, float metalico, float suavidad, float emision)
+    {
+        mat.color = color;
+        if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", metalico);
+        if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", suavidad);
+        if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", suavidad);
+        if (mat.HasProperty("_EmissionColor"))
+        {
+            if (emision > 0f) mat.EnableKeyword("_EMISSION");
+            else mat.DisableKeyword("_EMISSION");
+            mat.SetColor("_EmissionColor", color * emision);
+        }
+    }
+
+    void ActualizarVisuales(float mezcla)
+    {
+        int indiceFondo = temaManual + (cambiarFondoPorNivel ? Difficulty - 1 : 0);
+        Color fondo = ColorDePaleta(coloresFondo, indiceFondo, Color.black);
+        cam.backgroundColor = Color.Lerp(cam.backgroundColor, fondo, mezcla);
+        Color colorJugador = ColorDePaleta(coloresJugador, indiceJugador, Color.yellow);
+        AplicarMaterial(ballMat, colorJugador, metalicoJugador, suavidadJugador, emisionJugador);
+        AplicarMaterial(safeMat, colorSeguro, metalicoPlataformas, suavidadPlataformas, 0f);
+        AplicarMaterial(dangerMat, colorPeligro, 0.05f, 0.45f, 0.20f);
+        AplicarMaterial(pillarMat, colorColumna, 0.10f, 0.45f, 0f);
+        ActualizarLuces();
     }
 
     void DeleteRing(Ring ring)
@@ -146,6 +273,7 @@ public class HelixGame : MonoBehaviour
         SetBallPosition();
         UpdateCamera(1f);
         messageText.text = "";
+        ActualizarVisuales(1f);
         UpdateUI();
     }
 
@@ -252,6 +380,15 @@ public class HelixGame : MonoBehaviour
         Keyboard kb = Keyboard.current;
         Mouse mouse = Mouse.current;
         Touchscreen touch = Touchscreen.current;
+        // V: cambia el tema del fondo. C: cambia el aspecto de la esfera.
+        if (kb != null)
+        {
+            if (kb.vKey.wasPressedThisFrame && coloresFondo != null && coloresFondo.Length > 0)
+                temaManual = (temaManual + 1) % coloresFondo.Length;
+            if (kb.cKey.wasPressedThisFrame && coloresJugador != null && coloresJugador.Length > 0)
+                indiceJugador = (indiceJugador + 1) % coloresJugador.Length;
+        }
+        ActualizarVisuales(1f - Mathf.Exp(-velocidadTransicionColor * Time.unscaledDeltaTime));
         if (gameOver)
         {
             // Game Loop: perder -> mostrar resultado -> reiniciar automaticamente.
@@ -359,7 +496,7 @@ public class HelixGame : MonoBehaviour
             new Vector2(-25, -20), new Vector2(450, 90), 30, TextAnchor.UpperRight);
         Text help = MakeText(obj.transform, "Controles", new Vector2(0.5f, 0), new Vector2(0.5f, 0),
             new Vector2(0, 22), new Vector2(1150, 60), 24, TextAnchor.MiddleCenter);
-        help.text = "A / D o flechas | Arrastra con raton o dedo | R: reiniciar";
+        help.text = "A / D o flechas: girar | V: fondo | C: color del jugador | R: reiniciar";
         messageText = MakeText(obj.transform, "Mensaje", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
             Vector2.zero, new Vector2(1150, 320), 40, TextAnchor.MiddleCenter);
         messageText.color = new Color(1f, 0.85f, 0.3f);
