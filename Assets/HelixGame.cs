@@ -82,6 +82,14 @@ public class HelixGame : MonoBehaviour
     [SerializeField] Color colorPanel = new Color(0.035f, 0.065f, 0.13f, 0.98f);
     [SerializeField] Color colorBoton = new Color(0.06f, 0.48f, 0.65f);
     [SerializeField] bool reinicioAutomatico = true;
+
+    // Actividad 4.6: Game Feel (racha, SuperSpeed, estela y progreso).
+    [Header("8. UX - SuperSpeed y Trail Renderer (Actividad 4.6)")]
+    [SerializeField, Range(2, 4)] int huecosParaSuperSpeed = 2;
+    [SerializeField, Range(1.1f, 3f)] float multiplicadorSuperSpeed = 2f;
+    [SerializeField, Range(0.5f, 2.5f)] float duracionSuperSpeed = 2.5f;
+    [SerializeField] Color colorEstela = new Color(0.2f, 0.95f, 1f, 1f);
+
     const string EscenaMenu = "Menu";
     const string EscenaNivel1 = "Nivel1";
     const string EscenaNivel2 = "Nivel2";
@@ -118,6 +126,10 @@ public class HelixGame : MonoBehaviour
         sensibilidadArrastre = Mathf.Max(0.01f, sensibilidadArrastre);
         velocidadRebote = Mathf.Max(0.5f, velocidadRebote);
         velocidadTransicionColor = Mathf.Max(0.1f, velocidadTransicionColor);
+        huecosParaSuperSpeed = Mathf.Clamp(huecosParaSuperSpeed, 2, 4);
+        multiplicadorSuperSpeed = Mathf.Clamp(multiplicadorSuperSpeed, 1.1f, 3f);
+        // La estela se desvanece en 0.2 s; la duracion total queda por debajo de 3 s.
+        duracionSuperSpeed = Mathf.Clamp(duracionSuperSpeed, 0.5f, 2.5f);
     }
 
     class Ring
@@ -129,10 +141,13 @@ public class HelixGame : MonoBehaviour
     GameObject world;
     Transform ball;
     Camera cam;
-    Material safeMat, dangerMat, ballMat, pillarMat;
+    Material safeMat, dangerMat, ballMat, pillarMat, trailMat;
+    TrailRenderer estela;
+    Slider barraProgreso;
+    Text textoSuperSpeed;
     Text scoreText, bestText, messageText;
-    int nextRing, lastRing, score, best;
-    float angle, height, speed, cameraHeight;
+    int nextRing, lastRing, score, best, rachaHuecos;
+    float angle, height, speed, cameraHeight, tiempoSuperSpeed;
     bool gameOver;
     float tiempoReinicio;
     int Difficulty => etapaActual;
@@ -157,6 +172,12 @@ public class HelixGame : MonoBehaviour
         dangerMat = MakeMaterial(colorPeligro);
         ballMat = MakeMaterial(ColorDePaleta(coloresJugador, 0, Color.yellow));
         pillarMat = MakeMaterial(colorColumna);
+        Shader shaderEstela = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+        if (shaderEstela == null) shaderEstela = Shader.Find("Sprites/Default");
+        if (shaderEstela == null) shaderEstela = Shader.Find("Universal Render Pipeline/Unlit");
+        if (shaderEstela == null) shaderEstela = Shader.Find("Standard");
+        trailMat = new Material(shaderEstela);
+        trailMat.color = colorEstela;
         cam = Camera.main;
         if (cam == null)
         {
@@ -289,6 +310,7 @@ public class HelixGame : MonoBehaviour
         world.transform.SetParent(transform, false);
         nextRing = 0; lastRing = -1; score = puntosInicioNivel;
         angle = 0f; height = 2.2f; speed = 0f;
+        rachaHuecos = 0; tiempoSuperSpeed = 0f; estela = null;
         cameraHeight = height; gameOver = false; tiempoReinicio = 0f;
         enPausa = false; nivelCompletado = false;
         CerrarPanel();
@@ -300,6 +322,20 @@ public class HelixGame : MonoBehaviour
         player.GetComponent<Renderer>().sharedMaterial = ballMat;
         Destroy(player.GetComponent<Collider>());
         ball = player.transform;
+        // La estela se genera en la esfera y solo emite durante SuperSpeed.
+        estela = player.AddComponent<TrailRenderer>();
+        estela.sharedMaterial = trailMat;
+        estela.time = 0.35f;
+        estela.startWidth = 0.28f;
+        estela.endWidth = 0.015f;
+        estela.minVertexDistance = 0.03f;
+        estela.numCapVertices = 4;
+        estela.startColor = colorEstela;
+        estela.endColor = new Color(colorEstela.r, colorEstela.g, colorEstela.b, 0f);
+        estela.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        estela.receiveShadows = false;
+        estela.emitting = false;
+        estela.Clear();
         EnsureRings();
         SetBallPosition();
         UpdateCamera(1f);
@@ -437,6 +473,13 @@ public class HelixGame : MonoBehaviour
         }
         if (enPausa) return;
         float dt = Mathf.Min(Time.deltaTime, 0.05f), direction = 0f;
+        // El potenciador se cuenta solo mientras el juego esta activo.
+        if (tiempoSuperSpeed > 0f)
+        {
+            tiempoSuperSpeed = Mathf.Max(0f, tiempoSuperSpeed - Time.deltaTime);
+            if (tiempoSuperSpeed <= 0f && estela != null) estela.emitting = false;
+        }
+        ActualizarIndicadorSuperSpeed();
         if (kb != null)
         {
             if (kb.aKey.isPressed || kb.leftArrowKey.isPressed) direction -= 1f;
@@ -457,8 +500,10 @@ public class HelixGame : MonoBehaviour
             gravedadInicial + (Difficulty - 1) * aumentoGravedadPorNivel);
         float limiteCaida = Mathf.Min(velocidadCaidaMaxima,
             velocidadCaidaInicial + (Difficulty - 1) * aumentoVelocidadPorNivel);
-        speed -= gravedad * dt;
-        speed = Mathf.Max(speed, -limiteCaida);
+        // SuperSpeed aumenta realmente la velocidad de traslacion vertical.
+        float factorVelocidad = tiempoSuperSpeed > 0f ? multiplicadorSuperSpeed : 1f;
+        speed -= gravedad * factorVelocidad * dt;
+        speed = Mathf.Max(speed, -limiteCaida * factorVelocidad);
         float newHeight = height + speed * dt;
         while (speed < 0f)
         {
@@ -468,6 +513,8 @@ public class HelixGame : MonoBehaviour
             int type = rings[nextRing].sectors[s];
             if (type == 1)
             {
+                // Rebotar interrumpe la racha de huecos consecutivos.
+                rachaHuecos = 0;
                 newHeight = surface; speed = velocidadRebote; break;
             }
             if (type == 2)
@@ -477,6 +524,12 @@ public class HelixGame : MonoBehaviour
             // Una plataforma atravesada: sumar puntos y generar otra seccion.
             nextRing++;
             score += puntosPorPlataforma;
+            rachaHuecos++;
+            if (rachaHuecos >= (etapaActual >= 2 ? 1 : huecosParaSuperSpeed))
+            {
+                rachaHuecos = 0;
+                if (tiempoSuperSpeed <= 0f) ActivarSuperSpeed();
+            }
             if (score > best)
             {
                 best = score;
@@ -498,6 +551,43 @@ public class HelixGame : MonoBehaviour
         UpdateCamera(1f - Mathf.Exp(-6f * dt));
     }
 
+    // Actividad 4.6: potenciador automatico al atravesar huecos en racha.
+    void ActivarSuperSpeed()
+    {
+        tiempoSuperSpeed = Mathf.Min(2.5f, duracionSuperSpeed);
+        if (speed < 0f) speed *= multiplicadorSuperSpeed;
+        if (estela != null)
+        {
+            estela.Clear();
+            estela.emitting = true;
+        }
+        ActualizarIndicadorSuperSpeed();
+    }
+
+    void DetenerSuperSpeed()
+    {
+        tiempoSuperSpeed = 0f;
+        rachaHuecos = 0;
+        if (estela != null) estela.emitting = false;
+        ActualizarIndicadorSuperSpeed();
+    }
+
+    void ActualizarIndicadorSuperSpeed()
+    {
+        if (textoSuperSpeed == null) return;
+        if (tiempoSuperSpeed > 0f)
+        {
+            textoSuperSpeed.text = "SUPERSPEED  x" + multiplicadorSuperSpeed.ToString("0.0") +
+                "  |  " + tiempoSuperSpeed.ToString("0.0") + " s";
+            textoSuperSpeed.color = colorEstela;
+        }
+        else
+        {
+            textoSuperSpeed.text = "RACHA: " + rachaHuecos + " / " + (etapaActual >= 2 ? 1 : huecosParaSuperSpeed);
+            textoSuperSpeed.color = Color.white;
+        }
+    }
+
     void SetBallPosition() { ball.position = Point(Orbit, angle, height); }
 
     void UpdateCamera(float blend)
@@ -509,6 +599,7 @@ public class HelixGame : MonoBehaviour
 
     void EndGame()
     {
+        DetenerSuperSpeed();
         gameOver = true;
         PlayerPrefs.SetInt(RecordKey, best);
         PlayerPrefs.Save();
@@ -569,7 +660,7 @@ public class HelixGame : MonoBehaviour
 
     void MostrarInstrucciones()
     {
-        AbrirPanel("COMO JUGAR", "A / D o flechas: girar.\nArrastra con el raton o el dedo.\nEvita los sectores rojos y atraviesa los huecos.\nESC: pausa | V: fondo | C: color | R: reiniciar.",
+        AbrirPanel("COMO JUGAR", "A / D o flechas: girar.\nArrastra con el raton o el dedo.\nEvita los sectores rojos y atraviesa los huecos.\nSuperSpeed: cruza 2 huecos seguidos (2.5 s).\nESC: pausa | V: fondo | C: color | R: reiniciar.",
             new string[] { "Volver" }, new System.Action[] { MostrarMenu });
     }
 
@@ -590,6 +681,7 @@ public class HelixGame : MonoBehaviour
 
     void CompletarNivel()
     {
+        DetenerSuperSpeed();
         nivelCompletado = true;
         UpdateUI();
         AbrirPanel("NIVEL " + etapaActual + " COMPLETADO", "Plataformas superadas: " + nextRing +
@@ -644,6 +736,15 @@ public class HelixGame : MonoBehaviour
             new Vector2(22, -14), new Vector2(300, 112), 27, TextAnchor.UpperLeft);
         bestText = MakeText(hud.transform, "Record", new Vector2(1, 1), new Vector2(1, 1),
             new Vector2(-22, -14), new Vector2(300, 50), 26, TextAnchor.UpperRight);
+        // Barra de progreso (Slider) creada automaticamente en cada nivel.
+        Text etiquetaProgreso = MakeText(hud.transform, "Etiqueta progreso", new Vector2(.5f, 1f),
+            new Vector2(.5f, 1f), new Vector2(0, -8), new Vector2(340, 30),
+            18, TextAnchor.MiddleCenter);
+        etiquetaProgreso.text = "PROGRESO DEL NIVEL";
+        barraProgreso = CrearBarraProgreso(hud.transform);
+        textoSuperSpeed = MakeText(hud.transform, "Indicador SuperSpeed", new Vector2(.5f, 1f),
+            new Vector2(.5f, 1f), new Vector2(0, -78), new Vector2(390, 36),
+            21, TextAnchor.MiddleCenter);
         MakeButton(hud.transform, "Pausa", new Vector2(1, 1), new Vector2(1, 1),
             new Vector2(-22, -74), new Vector2(140, 48), Pausar);
         MakeButton(hud.transform, "Fondo", new Vector2(0, 0), new Vector2(0, 0),
@@ -655,6 +756,37 @@ public class HelixGame : MonoBehaviour
         help.text = "A / D o arrastrar para girar";
         messageText = MakeText(hud.transform, "Mensaje", new Vector2(.5f, .5f), new Vector2(.5f, .5f),
             Vector2.zero, new Vector2(400, 80), 25, TextAnchor.MiddleCenter);
+    }
+
+    Slider CrearBarraProgreso(Transform parent)
+    {
+        GameObject barra = new GameObject("Barra de progreso - Slider", typeof(RectTransform));
+        barra.transform.SetParent(parent, false);
+        RectTransform rect = barra.GetComponent<RectTransform>();
+        rect.anchorMin = rect.anchorMax = new Vector2(.5f, 1f);
+        rect.pivot = new Vector2(.5f, 1f);
+        rect.anchoredPosition = new Vector2(0, -47);
+        rect.sizeDelta = new Vector2(320, 19);
+        Image fondo = barra.AddComponent<Image>();
+        fondo.color = new Color(.12f, .17f, .28f, .95f);
+        Slider slider = barra.AddComponent<Slider>();
+        slider.direction = Slider.Direction.LeftToRight;
+        slider.interactable = false;
+        slider.transition = Selectable.Transition.None;
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        GameObject relleno = new GameObject("Relleno del progreso", typeof(RectTransform));
+        relleno.transform.SetParent(barra.transform, false);
+        RectTransform fillRect = relleno.GetComponent<RectTransform>();
+        fillRect.anchorMin = Vector2.zero;
+        fillRect.anchorMax = Vector2.one;
+        fillRect.offsetMin = new Vector2(2, 2);
+        fillRect.offsetMax = new Vector2(-2, -2);
+        relleno.AddComponent<Image>().color = new Color(.2f, .94f, .74f, 1f);
+        slider.fillRect = fillRect;
+        slider.targetGraphic = fondo;
+        slider.value = 0f;
+        return slider;
     }
 
     void CambiarFondo()
@@ -739,6 +871,7 @@ public class HelixGame : MonoBehaviour
         if (dangerMat != null) Destroy(dangerMat);
         if (ballMat != null) Destroy(ballMat);
         if (pillarMat != null) Destroy(pillarMat);
+        if (trailMat != null) Destroy(trailMat);
     }
 
     Text MakeText(Transform parent, string name, Vector2 anchor, Vector2 pivot,
@@ -764,5 +897,8 @@ public class HelixGame : MonoBehaviour
         scoreText.text = "PUNTOS: " + score + "\nNIVEL: " + etapaActual +
             "\nPlataformas: " + nextRing + " / " + plataformasPorNivel;
         bestText.text = "RECORD: " + best;
+        if (barraProgreso != null)
+            barraProgreso.value = Mathf.Clamp01((float)nextRing / Mathf.Max(1, plataformasPorNivel));
+        ActualizarIndicadorSuperSpeed();
     }
 }
